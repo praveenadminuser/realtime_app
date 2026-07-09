@@ -14,13 +14,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code.
-COPY app ./app
+COPY app .
 
 # Run as a non-root user (Kubernetes/EKS best practice).
-RUN useradd --create-home appuser
+# Create the user, make the logs dir, and give the user ownership of /app so
+# the app can write logs/app.log at runtime.
+RUN useradd --create-home appuser \
+    && mkdir -p /app/logs \
+    && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
 
 # Note: no --reload in production. Bind to 0.0.0.0 so the container is reachable.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
