@@ -214,6 +214,80 @@ Rebuilding the image does **not** update a running pod. Rebuild, then `rollout r
 
 ---
 
+## Cleanup — stopping things
+
+Kubernetes has no "stop". You either **delete** the resource or **scale it to zero**.
+
+### Delete
+
+```bash
+kubectl delete -f k8s/deployment.yaml
+kubectl delete -f k8s/service.yaml
+
+# or by name, without the files
+kubectl delete deployment realtime-app
+kubectl delete service realtime-app
+```
+
+Deleting a **pod** does nothing lasting — the Deployment immediately creates a
+replacement. That's the reconciliation loop working as designed:
+
+```bash
+kubectl delete pod <pod-name>     # a new pod appears within seconds
+```
+
+To actually stop pods, delete (or scale) the **Deployment** that owns them.
+Deleting a Deployment cascades and removes its pods automatically.
+
+Deleting a **Service** only removes the network front door — the pods keep running,
+just unreachable. The two are independent.
+
+### Scale to zero (pause without deleting)
+
+Keeps the Deployment and Service definitions, runs no pods:
+
+```bash
+kubectl scale deployment realtime-app --replicas=0
+kubectl get pods                                    # none
+kubectl scale deployment realtime-app --replicas=1  # bring it back
+```
+
+Use this to idle the app and resume in one command. Use `delete` for a clean slate.
+
+### Deleting one Service when several are listed
+
+```bash
+kubectl get services
+NAME           TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+kubernetes     ClusterIP      10.96.0.1        <none>        443/TCP          100m
+realtime-app   LoadBalancer   10.110.138.178   localhost     8080:32652/TCP   37m
+
+kubectl delete service realtime-app     # by name — touches nothing else
+```
+
+**Leave the `kubernetes` service alone.** It's built in, created automatically in every
+`default` namespace, and is the in-cluster endpoint for the **API server itself**
+(`10.96.0.1:443`) — how pods reach the Kubernetes API. Delete it and the control plane
+recreates it in seconds, but you'd briefly break in-cluster API access.
+
+> Rule of thumb: the `kubernetes` ClusterIP on port 443 is always there. Anything else is yours.
+
+### Verify it's gone
+
+```bash
+kubectl get all        # deployments, pods, services, replicasets at once
+```
+
+`No resources found` means clean.
+
+### ⚠️ On EKS: delete Services before deleting the cluster
+
+A `type: LoadBalancer` Service on Docker Desktop just releases `localhost`. On **EKS**,
+deleting the Service is what tears down the real AWS load balancer. Delete the cluster
+first and you orphan an ELB that keeps billing you.
+
+---
+
 ## What changes when moving to EKS
 
 Most of the above transfers unchanged — same YAML, same `kubectl`. The differences:
