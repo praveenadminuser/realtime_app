@@ -15,9 +15,50 @@ spec:
     spec:
       containers:
         - name: realtime-app
-          image: realtime-app:0.1.0
+          # Bumped from 0.1.0: the image now contains the DB layer and the
+          # migrations. Immutable tags — never reuse a tag for different code,
+          # or nodes serve a stale cached image and your rollout is a no-op.
+          image: realtime-app:0.2.0
           # Use the image already in the local Docker daemon; don't try to pull
           # it from a registry (there isn't one yet). Change this for EKS.
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+          env:
+            # The one line that connects the app to a database. Its value comes
+            # from a Secret, never from this file — so the same Deployment YAML
+            # works against local Postgres and against RDS. On EKS you swap the
+            # Secret's contents; this stays byte-for-byte identical.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: DATABASE_URL
+            - name: DB_SSL
+              value: "false" # local Postgres speaks plaintext; set "true" for RDS
+          # Liveness: is the process wedged? Restarting fixes that.
+          # It does not check the database on purpose — see the note in main.py.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness: can this pod serve? This one DOES check the database, so a
+          # pod with no working DB connection is removed from the Service's
+          # endpoints (no traffic) but not killed — it rejoins by itself when
+          # Postgres recovers. This is also what makes the app tolerate starting
+          # before the database is up, with no wait-for-it script.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi

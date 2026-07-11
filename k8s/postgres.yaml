@@ -1,0 +1,123 @@
+# Postgres for LOCAL Kubernetes only.
+#
+# On EKS this entire file is deleted and replaced by an RDS instance. Running a
+# production database as a pod means you own backups, failover, patching and
+# storage — RDS exists so you don't. The point of running it here is that the
+# *wiring* (Secret -> env var -> Service DNS name) is identical either way, so
+# the app never learns the difference.
+#
+#   kubectl apply -f k8s/postgres.yaml
+#   kubectl get pods -l app=postgres -w
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+type: Opaque
+# stringData takes plain text; Kubernetes base64-encodes it for you.
+#
+# NOTE: base64 is encoding, not encryption — anyone with read access to the
+# namespace can decode this. These are throwaway local credentials and this file
+# is committed on purpose so the setup is reproducible. On EKS you do NOT commit
+# a Secret: the real one is created from AWS Secrets Manager (via the External
+# Secrets Operator or the Secrets Store CSI driver), and only DATABASE_URL changes.
+stringData:
+  POSTGRES_USER: realtime
+  POSTGRES_PASSWORD: realtime
+  POSTGRES_DB: realtime
+  # The single seam between local and cloud. Host "postgres" is the Service name
+  # below — the same label-based DNS your realtime-app Service uses. On EKS this
+  # one value becomes the RDS endpoint and nothing else in the app changes.
+  DATABASE_URL: postgresql+asyncpg://realtime:realtime@postgres:5432/realtime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # No storageClassName: Docker Desktop's default class provisions this
+  # automatically. Without a PVC, deleting the pod would erase the database —
+  # a container's filesystem dies with it.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The default rolling strategy would start a
+  # second Postgres pod before killing the first, and both would try to mount the
+  # same ReadWriteOnce volume — the new pod hangs forever and the rollout stalls.
+  # Kill the old one first, then start the new one.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
+          env:
+            # The official image initialises the cluster in the *root* of the
+            # mounted volume — but a PVC arrives with a lost+found directory,
+            # and initdb refuses a non-empty directory. Pointing PGDATA at a
+            # subdirectory is the standard fix for this exact error.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              # A TCP check passes while Postgres is still initialising and would
+              # let the app connect too early. pg_isready is the real signal.
+              command: ["pg_isready", "-U", "realtime", "-d", "realtime"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "realtime", "-d", "realtime"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  # ClusterIP, deliberately. A database has no business being reachable from
+  # outside the cluster — only the app pods need it. Compare with realtime-app's
+  # LoadBalancer. (For a GUI client, use: kubectl port-forward svc/postgres 5432:5432)
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

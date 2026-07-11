@@ -13,3 +13,5 @@ readme.md
 .mypy_cache/
 *.egg-info/
 .env
+k8s/
+docker-compose.yml

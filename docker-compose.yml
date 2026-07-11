@@ -1,0 +1,45 @@
+# Local development: app + Postgres, one command.
+#
+#   docker compose up --build -d
+#   docker compose run --rm api alembic upgrade head    # create the schema
+#   curl http://localhost:8000/health/ready
+#
+# This file never ships to AWS. On EKS the "db" service is replaced by RDS and
+# the only thing that changes is the DATABASE_URL the app is handed.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: realtime
+      POSTGRES_PASSWORD: realtime      # local-only throwaway credential
+      POSTGRES_DB: realtime
+    ports:
+      - "5432:5432"                    # exposed so you can attach psql/DBeaver from Windows
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Postgres briefly accepts connections while still initialising, so a port
+      # check is not enough — pg_isready is the honest signal.
+      test: ["CMD-SHELL", "pg_isready -U realtime -d realtime"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      # Host is "db" — the compose service name, resolved by compose's internal DNS.
+      # Exactly the same idea as a Kubernetes Service name. Not "localhost": inside
+      # the api container, localhost is the api container.
+      DATABASE_URL: postgresql+asyncpg://realtime:realtime@db:5432/realtime
+      DB_ECHO: "true"                  # print SQL locally; left off in the cluster
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy     # wait for the healthcheck, not just for the container to exist
+
+volumes:
+  pgdata:                              # named volume: data survives `docker compose down`
+                                       # (use `down -v` to wipe it and start clean)

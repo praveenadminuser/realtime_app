@@ -16,6 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code.
 COPY app .
 
+# Migrations ship inside the image so the exact code and the exact schema it
+# expects are versioned together. `alembic upgrade head` is then runnable from
+# this same image — as a Compose one-off locally, and as a Kubernetes Job on EKS.
+COPY alembic.ini .
+COPY alembic ./alembic
+
 # Run as a non-root user (Kubernetes/EKS best practice).
 # Create the user, make the logs dir, and give the user ownership of /app so
 # the app can write logs/app.log at runtime.
