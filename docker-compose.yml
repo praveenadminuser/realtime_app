@@ -59,16 +59,39 @@ services:
   #
   api:
     build: .
-    environment:
-      # host.docker.internal resolves to the Windows host FROM INSIDE the container.
-      # "localhost" would be the container itself — the #1 Docker networking mistake.
-      # (Docker Desktop only; plain Linux Docker needs the host-gateway IP.)
-      DB_HOST: host.docker.internal
-      DB_PORT: "5432"
-      DB_USER: postgres
-      DB_PASSWORD: password1
-      DB_NAME: realtimeapp
-      DB_SSL: "false"
+    # environment:
+    #   # host.docker.internal resolves to the Windows host FROM INSIDE the container.
+    #   # "localhost" would be the container itself — the #1 Docker networking mistake.
+    #   # (Docker Desktop only; plain Linux Docker needs the host-gateway IP.)
+    #   DB_HOST: host.docker.internal
+    #   DB_PORT: "5432"
+    #   DB_USER: postgres
+    #   DB_PASSWORD: password1
+    #   DB_NAME: realtimeapp
+    #   DB_SSL: "false"
+    # Which env file to load. Defaults to .env.dev — DELIBERATELY the safe one.
+    # A default of .env.prod would mean a fresh clone running `docker compose up`
+    # points at the production database, and a stray `down -v` or `alembic upgrade`
+    # would then hit real data. Reaching anything but dev must be an explicit act:
+    #
+    #   docker compose up -d --build                              # dev (default)
+    #
+    # UAT — deliberate, and the syntax differs per shell:
+    #   ENV_FILE=.env.uat docker compose up -d --build            # Git Bash / POSIX
+    #   $env:ENV_FILE=".env.uat"; docker compose up -d --build    # PowerShell
+    #   set ENV_FILE=.env.uat && docker compose up -d --build     # cmd.exe
+    #
+    # In Git Bash the variable is a PREFIX — no `set`, no `&&`. `set ENV_FILE=...`
+    # is cmd.exe syntax; bash's `set` builtin does something else entirely and will
+    # NOT define the variable, so compose silently falls back to .env.dev.
+    #
+    # Switching this way edits no tracked file — so `env_file: .env.prod` can never
+    # be committed by accident.
+    #
+    # There is no .env.prod, on purpose. Production credentials do not live in a file
+    # on a laptop: prod reads a Kubernetes Secret sourced from AWS Secrets Manager,
+    # which is what the `envFrom` in k8s/deployment.yaml is already wired to.
+    env_file: ${ENV_FILE:-.env.dev}
     ports:
       - "8000:8000"
   #
