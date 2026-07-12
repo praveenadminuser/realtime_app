@@ -24,18 +24,18 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+          # Pulls in DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME as env
+          # vars, straight from the Secret. This is what connects the app to a
+          # database, and it names no host and no credential — so the same YAML
+          # works against local Postgres and against RDS. On EKS you swap what's
+          # IN the Secret (DB_HOST becomes the RDS endpoint); this file does not
+          # change by a single byte.
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
           env:
-            # The one line that connects the app to a database. Its value comes
-            # from a Secret, never from this file — so the same Deployment YAML
-            # works against local Postgres and against RDS. On EKS you swap the
-            # Secret's contents; this stays byte-for-byte identical.
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-credentials
-                  key: DATABASE_URL
             - name: DB_SSL
-              value: "false" # local Postgres speaks plaintext; set "true" for RDS
+              value: "false" # local Postgres speaks plaintext; RDS needs "true"
           # Liveness: is the process wedged? Restarting fixes that.
           # It does not check the database on purpose — see the note in main.py.
           livenessProbe:

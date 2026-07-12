@@ -9,34 +9,82 @@ laptop and an RDS instance in AWS without a single `if environment == "prod"`.
 
 Everything below rests on one design decision:
 
-> **The app knows nothing about where its database is. It reads `DATABASE_URL` and connects.**
+> **The app knows nothing about where its database is. It is handed a host, a port and
+> credentials, and it connects.**
 
-```
-docker compose      DATABASE_URL=postgresql+asyncpg://realtime:realtime@db:5432/realtime
-local Kubernetes    DATABASE_URL=postgresql+asyncpg://realtime:realtime@postgres:5432/realtime
-AWS EKS             DATABASE_URL=postgresql+asyncpg://appuser:••••@mydb.abc.eu-west-1.rds.amazonaws.com:5432/realtime
-```
-
-Three environments, three values, **zero code changes**. Only the *host* differs, and
-in every case it's a name resolved by DNS — a Compose service name, a Kubernetes
-Service name, an AWS endpoint. Never an IP, never `localhost`.
-
+Configuration comes from `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`
+(or a full `DATABASE_URL`, which overrides them). [`app/config.py`](app/config.py) does
+not contain the words `docker`, `kubernetes`, or `aws` anywhere — and it never should.
 If you find yourself adding an environment check to the app, something has gone wrong.
 The environment belongs in the Secret, not in the code.
+
+## The five ways to run this
+
+Really a 2×2 grid — **where the app runs** × **where Postgres runs** — plus AWS at the end.
+`DB_HOST` is nothing more than the answer to: _from where the app process is standing,
+what name reaches Postgres?_
+
+| #   | App runs in       | Postgres runs in         | `DB_HOST`               | `DB_SSL`   | Config comes from            |
+| --- | ----------------- | ------------------------ | ----------------------- | ---------- | ---------------------------- |
+| 1   | Docker container  | Windows (native install) | `host.docker.internal`  | `false`    | compose `environment:`       |
+| 2   | Windows (uvicorn) | Windows (native install) | `localhost`             | `false`    | `.env`                       |
+| 3   | Windows (uvicorn) | Docker container         | `localhost`             | `false`    | `.env`                       |
+| 4   | Docker container  | Docker container         | `db`                    | `false`    | compose `environment:`       |
+| 5   | Kubernetes pod    | Kubernetes pod           | `postgres`              | `false`    | Secret                       |
+| 6   | **EKS pod**       | **AWS RDS**              | `xxx.rds.amazonaws.com` | **`true`** | Secret ← AWS Secrets Manager |
+
+Row 6 is the one that matters in the end; the rest exist to make it a config change
+rather than a code change.
+
+**Row 3 is the best day-to-day loop** — a disposable, version-pinned database from the
+container, plus instant code reloads with no image rebuild. Start Postgres with
+`docker compose up -d db`, then run uvicorn on Windows against `localhost:5432`. This is
+what option A in [`.env.example`](.env.example) is set up for.
+
+Two rules explain the whole grid:
+
+**`localhost` means the process, not the machine.** Inside the api container, `localhost`
+_is_ the api container — there is no Postgres in there. That is why row 1 needs
+`host.docker.internal` while row 2, with Postgres in the very same place, uses
+`localhost`. This is the most common Docker networking mistake there is.
+
+**Rows 4, 5 and 6 all use a DNS name, never an IP.** `db` is a Compose service name,
+`postgres` is a Kubernetes Service name, and the RDS endpoint is an AWS DNS record. In
+each case something resolves a _name_ to an IP that is free to move. That is precisely
+why going from row 4 to row 6 changes a value and not a line of code.
+
+### Where each config actually comes from
+
+Worth being explicit, because the two files look redundant and aren't:
+
+- **Compose** injects `environment:` straight into the container. `.env` is not involved
+  and is not even in the image ([`.dockerignore`](.dockerignore) excludes it).
+- **`.env`** is read by `pydantic-settings` and matters _only_ when you start uvicorn
+  yourself, outside a container (rows 2 and 3). If you only ever use Compose and
+  Kubernetes, you can ignore it entirely.
+- **Kubernetes** injects the Secret's keys as env vars via `envFrom`. Same variable
+  names, different source.
+
+They cannot be merged into one file, because `DB_HOST` genuinely differs between them —
+the same database has a different address depending on where you're standing.
+
+> Confusing overlap worth knowing: **Compose also reads a file named `.env`**, but for an
+> unrelated purpose — substituting `${VARIABLES}` _inside docker-compose.yml_ before it is
+> parsed. Same filename, different mechanism, nothing to do with your app's environment.
 
 ---
 
 ## The pieces
 
-| File | Job |
-|------|-----|
-| [`app/config.py`](app/config.py) | Reads `DATABASE_URL` (+ `DB_SSL`, pool sizes) from the environment. The only place env vars are touched. |
-| [`app/db.py`](app/db.py) | Async engine, connection pool, `get_session()` dependency. Knows about connections, not tables. |
-| [`app/models.py`](app/models.py) | The `Message` ORM model. **Describes** the table in Python. Emits no DDL, ever. |
-| [`alembic/versions/`](alembic/versions/) | The actual `CREATE TABLE`. The only thing that changes the schema. |
-| [`docker-compose.yml`](docker-compose.yml) | Local dev: app + Postgres in one command. |
-| [`k8s/postgres.yaml`](k8s/postgres.yaml) | Postgres in local Kubernetes. **Deleted on EKS** — replaced by RDS. |
-| [`k8s/migration-job.yaml`](k8s/migration-job.yaml) | Runs `alembic upgrade head` as a one-shot Job. Same file works against RDS. |
+| File                                               | Job                                                                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`app/config.py`](app/config.py)                   | Reads `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` (+ `DB_SSL`, pool sizes) and assembles the URL. The only place env vars are touched. |
+| [`app/db.py`](app/db.py)                           | Async engine, connection pool, `get_session()` dependency. Knows about connections, not tables.                                                  |
+| [`app/models.py`](app/models.py)                   | The `Message` ORM model. **Describes** the table in Python. Emits no DDL, ever.                                                                  |
+| [`alembic/versions/`](alembic/versions/)           | The actual `CREATE TABLE`. The only thing that changes the schema.                                                                               |
+| [`docker-compose.yml`](docker-compose.yml)         | Local dev: app + Postgres in one command.                                                                                                        |
+| [`k8s/postgres.yaml`](k8s/postgres.yaml)           | Postgres in local Kubernetes. **Deleted on EKS** — replaced by RDS.                                                                              |
+| [`k8s/migration-job.yaml`](k8s/migration-job.yaml) | Runs `alembic upgrade head` as a one-shot Job. Same file works against RDS.                                                                      |
 
 ### Where does the table actually get created?
 
@@ -55,7 +103,7 @@ Why not SQLAlchemy's `Base.metadata.create_all()`, which so many tutorials call 
 startup? Because it only ever does `CREATE TABLE IF NOT EXISTS`. It cannot **alter** an
 existing table. The day you add a column, `create_all()` sees the table already exists,
 does nothing, and the app crashes on a column Postgres has never heard of. Against RDS
-you cannot drop the table and start over. Schema *change*, not schema *creation*, is the
+you cannot drop the table and start over. Schema _change_, not schema _creation_, is the
 real problem — which is what Alembic solves.
 
 Alembic keeps a one-row `alembic_version` table recording which revision the database is
@@ -102,13 +150,13 @@ docker compose down -v     # stop and WIPE the data
 
 ### Why the compose file looks like it does
 
-**`DATABASE_URL` host is `db`, not `localhost`.** `db` is the Compose service name,
-resolved by Compose's internal DNS. Inside the `api` container, `localhost` *is* the api
+**`DB_HOST` is `db`, not `localhost`.** `db` is the Compose service name,
+resolved by Compose's internal DNS. Inside the `api` container, `localhost` _is_ the api
 container — there's no Postgres there. This is the same idea as a Kubernetes Service
 name, which is why it transfers unchanged.
 
 **`depends_on: condition: service_healthy`**, not a bare `depends_on`. Plain `depends_on`
-only waits for the container to *exist*, not to be *usable* — and Postgres accepts
+only waits for the container to _exist_, not to be _usable_ — and Postgres accepts
 connections for a moment while still initialising, then drops them. The `pg_isready`
 healthcheck is the honest signal.
 
@@ -124,7 +172,7 @@ you'll reuse on EKS.
 
 > **Running Postgres as a pod is a learning exercise, not a production pattern.** You'd
 > own backups, failover, patching, and storage. RDS exists precisely so you don't. The
-> value here is that the *wiring* is identical, so the app never learns the difference.
+> value here is that the _wiring_ is identical, so the app never learns the difference.
 
 ```bash
 # 1. Build the image (the tag must match the manifests)
@@ -173,18 +221,18 @@ kubectl port-forward svc/postgres 5432:5432
 **The Postgres Service is `ClusterIP`, not `LoadBalancer`.** A database has no business
 being reachable from outside the cluster; only the app pods need it. Contrast with the
 `realtime-app` Service, which is deliberately `LoadBalancer`. Use `port-forward` when
-*you* need to reach it — that's a dev tool, not an access mechanism.
+_you_ need to reach it — that's a dev tool, not an access mechanism.
 
 **`strategy: Recreate` on the Postgres Deployment.** The default `RollingUpdate` would
 start a second Postgres pod before killing the first, and both would try to mount the
 same `ReadWriteOnce` volume. The new pod hangs forever and the rollout stalls. Kill the
 old one first.
 
-**`PGDATA` points at a *subdirectory*** (`/var/lib/postgresql/data/pgdata`). A freshly
+**`PGDATA` points at a _subdirectory_** (`/var/lib/postgresql/data/pgdata`). A freshly
 provisioned PVC arrives containing a `lost+found` directory, and `initdb` refuses to
 initialise a non-empty directory. This is the standard fix for that exact error.
 
-**A migration Job, not an initContainer.** An initContainer runs on *every* pod, so
+**A migration Job, not an initContainer.** An initContainer runs on _every_ pod, so
 scaling to 3 replicas means three concurrent `alembic upgrade` runs racing each other. A
 Job runs exactly once. (Alembic does take a lock, so the race is survivable — but
 "survivable" is a poor foundation for schema changes.)
@@ -197,7 +245,7 @@ probe decision in the file:
 /health/ready  → readiness  → SELECT 1
 ```
 
-If *liveness* checked Postgres, a database blip would make Kubernetes kill and restart
+If _liveness_ checked Postgres, a database blip would make Kubernetes kill and restart
 every app pod — which cannot fix a database problem and only makes it worse. Readiness
 returning 503 instead pulls the pod out of the Service's endpoints (no traffic) without
 killing it, and it rejoins automatically when Postgres recovers. This is also why the app
@@ -226,19 +274,19 @@ credentials. **On EKS you do not commit the Secret** — see below.
 
 What actually changes. Less than you'd expect.
 
-| Concern | Local Kubernetes | EKS |
-|---------|-----------------|-----|
-| Postgres | `k8s/postgres.yaml` (a pod) | **delete that file** — provision RDS instead |
-| `DATABASE_URL` host | `postgres` (Service name) | the RDS endpoint |
-| `DB_SSL` | `false` | **`true`** — RDS refuses plaintext |
-| Secret | committed, `stringData` | from AWS Secrets Manager, **never committed** |
-| Image | local Docker daemon, `IfNotPresent` | pushed to ECR, `imagePullPolicy: Always` |
-| Migration Job | same file | **same file, unchanged** |
-| `deployment.yaml` | — | **unchanged** |
-| `service.yaml` | — | unchanged (real ELB instead of `localhost`) |
+| Concern           | Local Kubernetes                    | EKS                                           |
+| ----------------- | ----------------------------------- | --------------------------------------------- |
+| Postgres          | `k8s/postgres.yaml` (a pod)         | **delete that file** — provision RDS instead  |
+| `DB_HOST`         | `postgres` (Service name)           | the RDS endpoint                              |
+| `DB_SSL`          | `false`                             | **`true`** — RDS refuses plaintext            |
+| Secret            | committed, `stringData`             | from AWS Secrets Manager, **never committed** |
+| Image             | local Docker daemon, `IfNotPresent` | pushed to ECR, `imagePullPolicy: Always`      |
+| Migration Job     | same file                           | **same file, unchanged**                      |
+| `deployment.yaml` | —                                   | **unchanged**                                 |
+| `service.yaml`    | —                                   | unchanged (real ELB instead of `localhost`)   |
 
-That `deployment.yaml` is unchanged is the whole payoff. It reads `DATABASE_URL` from a
-Secret by name; it does not care what's in it.
+That `deployment.yaml` is unchanged is the whole payoff. It pulls the Secret in wholesale
+with `envFrom`; it names no host and no credential, so it does not care what's in it.
 
 ### RDS setup
 
@@ -256,10 +304,27 @@ means the endpoint or port is wrong.
 
 ### The Secret, properly
 
-Store the URL in AWS Secrets Manager, then sync it into the cluster with the **External
-Secrets Operator** (or the Secrets Store CSI driver). The app still just reads a
-Kubernetes Secret called `postgres-credentials` with a key `DATABASE_URL` — identical to
-local. Only its *source* changes.
+Sync it from AWS Secrets Manager with the **External Secrets Operator** (or the Secrets
+Store CSI driver). The app still reads a Kubernetes Secret called `postgres-credentials`
+with keys `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` — byte-for-byte the
+same contract as local. Only its _source_ changes.
+
+**This is why the config is split into parts rather than one URL.** When RDS manages a
+credential, Secrets Manager stores it as a JSON document with exactly these fields:
+
+```json
+{
+  "host": "...",
+  "port": 5432,
+  "username": "appuser",
+  "password": "...",
+  "dbname": "realtime"
+}
+```
+
+so they map across one-to-one, with no string-building inside the secret and no fragile
+templating. Rotation then works on its own: Secrets Manager rotates the password, External
+Secrets refreshes the Kubernetes Secret, and nothing in the app or the manifests changes.
 
 ```yaml
 apiVersion: external-secrets.io/v1beta1
@@ -272,15 +337,27 @@ spec:
     name: aws-secrets-manager
     kind: SecretStore
   target:
-    name: postgres-credentials     # <-- the name deployment.yaml already expects
+    name: postgres-credentials # <-- the name deployment.yaml already expects
   data:
-    - secretKey: DATABASE_URL
+    - secretKey: DB_HOST # the key the app reads
       remoteRef:
-        key: prod/realtime-app/database-url
+        key: prod/realtime-app/db # the Secrets Manager secret
+        property: host # the field inside its JSON
+    - secretKey: DB_PORT
+      remoteRef: { key: prod/realtime-app/db, property: port }
+    - secretKey: DB_USER
+      remoteRef: { key: prod/realtime-app/db, property: username }
+    - secretKey: DB_PASSWORD
+      remoteRef: { key: prod/realtime-app/db, property: password }
+    - secretKey: DB_NAME
+      remoteRef: { key: prod/realtime-app/db, property: dbname }
 ```
 
 Grant the pod access with **IRSA** (IAM Roles for Service Accounts) — not static AWS keys
 in env vars.
+
+Note that `DB_SSL` is _not_ in the Secret: it isn't a credential. It's set to `"true"` in
+the Deployment's plain `env:` block for the EKS overlay.
 
 ### SSL — the asyncpg trap
 
@@ -302,7 +379,7 @@ def build_connect_args() -> dict:
 ```
 
 `build_connect_args()` is imported by [`alembic/env.py`](alembic/env.py) too — migrations
-must reach RDS over TLS exactly like the app does. For certificate *verification* against
+must reach RDS over TLS exactly like the app does. For certificate _verification_ against
 the AWS CA, download the RDS bundle and build the context from it
 (`ssl.create_default_context(cafile="global-bundle.pem")`) rather than the system store.
 
@@ -318,8 +395,8 @@ Each pod holds its **own** pool. The real connection count is:
 RDS caps `max_connections` by instance size — a `t3.micro` allows roughly **87**. Scale
 to 10 replicas with the defaults and you exhaust it, and the failure looks like random
 `FATAL: too many connections` under load, not a clean error. Do this multiplication
-*before* scaling. If pods outgrow it, put **RDS Proxy** in front and point `DATABASE_URL`
-at the proxy endpoint — again, a URL change and nothing else.
+_before_ scaling. If pods outgrow it, put **RDS Proxy** in front and point `DB_HOST` at the
+proxy endpoint — again, one value, and nothing else.
 
 `pool_pre_ping=True` and `pool_recycle=1800` in [`app/db.py`](app/db.py) exist for RDS
 specifically: RDS drops idle connections, and after a failover the pool is full of dead
@@ -352,7 +429,7 @@ alembic upgrade head --sql        # prints the SQL, executes nothing
 The local-vs-production gap that actually bites.
 
 **A migration and a deploy are not atomic.** During a rollout, old pods and new pods
-serve *simultaneously* against one database. A migration that drops or renames a column
+serve _simultaneously_ against one database. A migration that drops or renames a column
 breaks the old pods still selecting it.
 
 This forces **expand/contract**. To rename a column:
@@ -361,7 +438,7 @@ This forces **expand/contract**. To rename a column:
 2. Deploy: code writes to both columns.
 3. Backfill the new column.
 4. Deploy: code reads only the new column.
-5. *Later release:* migrate to drop the old column.
+5. _Later release:_ migrate to drop the old column.
 
 Four deploys to rename a column. That isn't Alembic being awkward — it's what
 zero-downtime costs, and every migration tool has the same constraint.
@@ -374,7 +451,7 @@ can lock a 50-million-row production table for minutes.
 
 **`downgrade()` is largely a fiction.** Nobody rolls a schema back in production — the
 down-migration for "drop a column" cannot restore the data it deleted. Real recovery is
-roll *forward* with a fix, or restore from backup. Keep `downgrade()` for local
+roll _forward_ with a fix, or restore from backup. Keep `downgrade()` for local
 iteration; don't treat it as a safety net.
 
 **`--autogenerate` is a draft, not an oracle.** It misses constraint renames, some type
@@ -399,13 +476,13 @@ You put `?sslmode=require` in the URL. asyncpg doesn't speak it — set `DB_SSL=
 
 **`InvalidPasswordError` / `password authentication failed`**
 The Secret and the Postgres pod disagree. Changing `POSTGRES_PASSWORD` does **not** change
-the password of an *already initialised* data directory — the env var only applies on first
+the password of an _already initialised_ data directory — the env var only applies on first
 `initdb`. Delete the PVC and let it re-init:
 `kubectl delete pvc postgres-data` (destroys the data).
 
 **Connection hangs, then times out (EKS)**
 Security groups. The RDS SG must allow inbound 5432 from the EKS node SG. A hang means
-"nothing is listening / nothing let me through"; a *refusal* means wrong endpoint or port.
+"nothing is listening / nothing let me through"; a _refusal_ means wrong endpoint or port.
 
 **`FATAL: too many connections`**
 `(pool_size + max_overflow) x replicas` exceeded the instance's `max_connections`. Shrink
@@ -425,7 +502,7 @@ Check `kubectl logs -l app=realtime-app` and `curl` the pod's `/health/ready`.
 ```bash
 # Compose
 docker compose up --build -d
-docker compose run --rm api alembic upgrade head
+docker compose run --rm api alembic upgrade head # This starts a third, temporary container from the same api image, runs Alembic against the same db, creates the messages table plus the alembic_version bookkeeping table, exits, and deletes itself (--rm). You do not need to restart the api container afterwards — the app doesn't cache the schema, it just issues SQL.image
 docker compose exec db psql -U realtime -d realtime
 docker compose down -v                       # wipe including data
 

@@ -22,7 +22,8 @@ def build_connect_args() -> dict:
 
 
 engine = create_async_engine(
-    settings.database_url,
+    # Assembled from DB_HOST/DB_PORT/... unless DATABASE_URL overrides it — see config.py.
+    settings.sqlalchemy_url,
     echo=settings.db_echo,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,

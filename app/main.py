@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from db import engine, get_session
 from logger import logger
 from models import Message
@@ -18,6 +19,10 @@ async def lifespan(app: FastAPI):
     # rather than raise: crashing here would put the pod in CrashLoopBackOff
     # whenever Postgres is merely slow to start. The readiness probe below is
     # what keeps traffic away until the database is actually reachable.
+    # safe_url, not the real one: the password is masked so it never reaches a log
+    # aggregator. Logging the target is worth it — "which database am I actually
+    # pointed at?" is the first question in every connection bug.
+    logger.info(f"Connecting to {settings.safe_url}")
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))

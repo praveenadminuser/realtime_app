@@ -28,7 +28,7 @@ def run_migrations_offline() -> None:
     Useful for RDS when a DBA wants to review the SQL before it touches production.
     """
     context.configure(
-        url=settings.database_url,
+        url=settings.sqlalchemy_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -52,7 +52,7 @@ async def run_async_migrations() -> None:
     # Built directly rather than from alembic.ini so it reuses the app's SSL
     # settings — migrations must reach RDS over TLS exactly like the app does.
     connectable = create_async_engine(
-        settings.database_url,
+        settings.sqlalchemy_url,
         poolclass=pool.NullPool,
         connect_args=build_connect_args(),
     )

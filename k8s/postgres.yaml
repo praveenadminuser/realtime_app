@@ -3,7 +3,7 @@
 # On EKS this entire file is deleted and replaced by an RDS instance. Running a
 # production database as a pod means you own backups, failover, patching and
 # storage — RDS exists so you don't. The point of running it here is that the
-# *wiring* (Secret -> env var -> Service DNS name) is identical either way, so
+# *wiring* (Secret -> env vars -> Service DNS name) is identical either way, so
 # the app never learns the difference.
 #
 #   kubectl apply -f k8s/postgres.yaml
@@ -19,16 +19,18 @@ type: Opaque
 # NOTE: base64 is encoding, not encryption — anyone with read access to the
 # namespace can decode this. These are throwaway local credentials and this file
 # is committed on purpose so the setup is reproducible. On EKS you do NOT commit
-# a Secret: the real one is created from AWS Secrets Manager (via the External
-# Secrets Operator or the Secrets Store CSI driver), and only DATABASE_URL changes.
+# a Secret: the real one is synced from AWS Secrets Manager (External Secrets
+# Operator / Secrets Store CSI driver) under this same name, with these same keys.
+#
+# Separate parts rather than one URL, deliberately: AWS Secrets Manager stores an
+# RDS credential as exactly these fields (host / port / username / password /
+# dbname), so they map across 1:1 with no string-building inside the secret.
 stringData:
-  POSTGRES_USER: realtime
-  POSTGRES_PASSWORD: realtime
-  POSTGRES_DB: realtime
-  # The single seam between local and cloud. Host "postgres" is the Service name
-  # below — the same label-based DNS your realtime-app Service uses. On EKS this
-  # one value becomes the RDS endpoint and nothing else in the app changes.
-  DATABASE_URL: postgresql+asyncpg://realtime:realtime@postgres:5432/realtime
+  DB_HOST: postgres # <-- the Service name below. On EKS: the RDS endpoint. This is the seam.
+  DB_PORT: "5432"
+  DB_USER: realtime
+  DB_PASSWORD: realtime
+  DB_NAME: realtime
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -42,7 +44,7 @@ spec:
       storage: 1Gi
   # No storageClassName: Docker Desktop's default class provisions this
   # automatically. Without a PVC, deleting the pod would erase the database —
-  # a container's filesystem dies with it.
+  # a container's filesystem is not storage.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -67,13 +69,22 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
-          envFrom:
-            - secretRef:
-                name: postgres-credentials
           env:
+            # The postgres image wants POSTGRES_*; our app wants DB_*. Rather than
+            # duplicate the values in the Secret under two names, map them here.
+            # One source of truth: the credentials cannot drift apart.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: DB_USER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: DB_PASSWORD }
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: DB_NAME }
             # The official image initialises the cluster in the *root* of the
-            # mounted volume — but a PVC arrives with a lost+found directory,
-            # and initdb refuses a non-empty directory. Pointing PGDATA at a
+            # mounted volume — but a PVC arrives with a lost+found directory, and
+            # initdb refuses a non-empty directory. Pointing PGDATA at a
             # subdirectory is the standard fix for this exact error.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
@@ -113,7 +124,7 @@ metadata:
 spec:
   # ClusterIP, deliberately. A database has no business being reachable from
   # outside the cluster — only the app pods need it. Compare with realtime-app's
-  # LoadBalancer. (For a GUI client, use: kubectl port-forward svc/postgres 5432:5432)
+  # LoadBalancer. (For a GUI client: kubectl port-forward svc/postgres 5432:5432)
   type: ClusterIP
   selector:
     app: postgres

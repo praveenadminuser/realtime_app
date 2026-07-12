@@ -29,9 +29,11 @@ spec:
           image: realtime-app:0.2.0
           imagePullPolicy: IfNotPresent
           command: ["alembic", "upgrade", "head"]
+          # The same Secret the app reads. Migrations must reach the same database
+          # by the same route — including TLS on RDS, which is why DB_SSL is here too.
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-credentials
-                  key: DATABASE_URL
+            - name: DB_SSL
+              value: "false" # "true" against RDS

@@ -4,42 +4,80 @@
 #   docker compose run --rm api alembic upgrade head    # create the schema
 #   curl http://localhost:8000/health/ready
 #
-# This file never ships to AWS. On EKS the "db" service is replaced by RDS and
-# the only thing that changes is the DATABASE_URL the app is handed.
+# This file never ships to AWS. On EKS the "db" service is replaced by RDS, and the
+# only thing that changes is DB_HOST (+ DB_SSL=true).
+#
+# ---------------------------------------------------------------------------
+# Already have Postgres installed on Windows and don't want this container?
+# See the commented "api" block at the bottom — you delete the "db" service and
+# point DB_HOST at host.docker.internal. No app code changes either way.
+# ---------------------------------------------------------------------------
 
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: realtime
-      POSTGRES_PASSWORD: realtime      # local-only throwaway credential
-      POSTGRES_DB: realtime
-    ports:
-      - "5432:5432"                    # exposed so you can attach psql/DBeaver from Windows
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      # Postgres briefly accepts connections while still initialising, so a port
-      # check is not enough — pg_isready is the honest signal.
-      test: ["CMD-SHELL", "pg_isready -U realtime -d realtime"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     # The postgres image uses POSTGRES_*; our app uses DB_*. Same values, and
+  #     # they must agree — these are what initdb creates on first boot.
+  #     POSTGRES_USER: realtime
+  #     POSTGRES_PASSWORD: realtime      # local-only throwaway credential
+  #     POSTGRES_DB: realtime
+  #   ports:
+  #     - "5432:5432"                    # exposed so you can attach psql/DBeaver from Windows
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   healthcheck:
+  #     # Postgres briefly accepts connections while still initialising, so a port
+  #     # check is not enough — pg_isready is the honest signal.
+  #     test: ["CMD-SHELL", "pg_isready -U realtime -d realtime"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 10
 
+  # api:
+  #   build: .
+  #   environment:
+  #     # DB_HOST is "db" — the compose service name, resolved by compose's internal
+  #     # DNS. Exactly the same idea as a Kubernetes Service name, which is why this
+  #     # transfers unchanged. NOT "localhost": inside the api container, localhost
+  #     # is the api container.
+  #     DB_HOST: db
+  #     DB_PORT: "5432"
+  #     DB_USER: realtime
+  #     DB_PASSWORD: realtime
+  #     DB_NAME: realtime
+  #     DB_SSL: "false" # a local container speaks plaintext
+  #     DB_ECHO: "true" # print SQL locally; left off in the cluster
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy # wait for the healthcheck, not just for the container to exist
+
+  # --- Variant: Postgres already installed on your Windows machine -------------
+  # Delete the "db" service above (and the volumes: block), then use this instead.
+  #
   api:
     build: .
     environment:
-      # Host is "db" — the compose service name, resolved by compose's internal DNS.
-      # Exactly the same idea as a Kubernetes Service name. Not "localhost": inside
-      # the api container, localhost is the api container.
-      DATABASE_URL: postgresql+asyncpg://realtime:realtime@db:5432/realtime
-      DB_ECHO: "true"                  # print SQL locally; left off in the cluster
+      # host.docker.internal resolves to the Windows host FROM INSIDE the container.
+      # "localhost" would be the container itself — the #1 Docker networking mistake.
+      # (Docker Desktop only; plain Linux Docker needs the host-gateway IP.)
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: password1
+      DB_NAME: realtimeapp
+      DB_SSL: "false"
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy     # wait for the healthcheck, not just for the container to exist
+  #
+  # Two things your local Postgres needs for this to work:
+  #   postgresql.conf  listen_addresses = '*'      (not just 127.0.0.1)
+  #   pg_hba.conf      allow the Docker bridge subnet
+  # A connection that HANGS rather than refuses is almost always pg_hba.conf.
+  # ---------------------------------------------------------------------------
 
-volumes:
-  pgdata:                              # named volume: data survives `docker compose down`
-                                       # (use `down -v` to wipe it and start clean)
+# volumes:
+#   pgdata: # named volume: data survives `docker compose down`
+#     # (use `down -v` to wipe it and start clean)
