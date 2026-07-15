@@ -5,6 +5,7 @@ metadata:
 spec:
   # LoadBalancer = reachable from outside the cluster.
   # On Docker Desktop this binds to localhost. On EKS it provisions a real AWS ELB.
+  # Identical in every overlay — this is the one file that genuinely never varies.
   type: LoadBalancer
   # Send traffic to every pod carrying this label — the same label the
   # Deployment stamps onto its pods.

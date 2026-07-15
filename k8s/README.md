@@ -1,5 +1,30 @@
 # Kubernetes — Local Setup Notes
 
+> ## ⚠️ The manifest layout has changed since this was written
+>
+> The flat `k8s/deployment.yaml`, `k8s/service.yaml`, `k8s/postgres.yaml` and
+> `k8s/migration-job.yaml` are gone. They now live in a **Kustomize** structure:
+>
+> ```
+> k8s/
+>   base/                     deployment, service, migration-job — environment-agnostic
+>   overlays/
+>     local/                  Docker Desktop + in-cluster Postgres  ← what this doc describes
+>     dev/  uat/  prod/       EKS + RDS + External Secrets
+> ```
+>
+> So every `kubectl apply -f k8s/<file>.yaml` below is now a single:
+>
+> ```bash
+> kubectl apply -k k8s/overlays/local
+> kubectl kustomize k8s/overlays/local     # preview without applying
+> ```
+>
+> **The explanations in this document are all still accurate** — labels, selectors,
+> `port` vs `targetPort`, Service types, probes, the endpoints check. Only the file paths
+> and the apply commands moved. Read it for the *why*; take the *commands* from
+> [DATABASE.md](../DATABASE.md) and [EKS.md](../EKS.md).
+
 Running the FastAPI app on Docker Desktop's Kubernetes. These are the exact steps
 taken, in order, with the reasoning and the mistakes hit along the way.
 

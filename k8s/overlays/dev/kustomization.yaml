@@ -1,0 +1,42 @@
+# EKS — dev.
+#
+#   kubectl apply -k k8s/overlays/dev
+#
+# No postgres.yaml here: the database is RDS. No Secret here either: the External
+# Secrets Operator creates `postgres-credentials` from AWS Secrets Manager. There
+# is nothing in this directory a credential could hide in.
+#
+# BEFORE APPLYING, replace <ACCOUNT_ID> and <REGION> throughout this overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - serviceaccount.yaml
+  - secretstore.yaml
+  - external-secret.yaml
+
+# Local tag -> ECR URI. This transformer rewrites the image in BOTH the Deployment
+# and the migration Job, so they can never drift onto different tags.
+images:
+  - name: realtime-app
+    newName: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/realtime-app
+    newTag: 0.2.0
+
+replicas:
+  - name: realtime-app
+    count: 2
+
+# RDS refuses plaintext connections, so DB_SSL=true. DB_ECHO off — logging every
+# SQL statement from every pod is noise you will pay to store.
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DB_SSL=true
+      - DB_ECHO=false
+
+patches:
+  - path: patch-aws.yaml
