@@ -76,15 +76,15 @@ the same database has a different address depending on where you're standing.
 
 ## The pieces
 
-| File                                               | Job                                                                                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`app/config.py`](app/config.py)                   | Reads `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` (+ `DB_SSL`, pool sizes) and assembles the URL. The only place env vars are touched. |
-| [`app/db.py`](app/db.py)                           | Async engine, connection pool, `get_session()` dependency. Knows about connections, not tables.                                                  |
-| [`app/models.py`](app/models.py)                   | The `Message` ORM model. **Describes** the table in Python. Emits no DDL, ever.                                                                  |
-| [`alembic/versions/`](alembic/versions/)           | The actual `CREATE TABLE`. The only thing that changes the schema.                                                                               |
-| [`docker-compose.yml`](docker-compose.yml)         | Local dev: app + Postgres in one command.                                                                                                        |
-| [`k8s/postgres.yaml`](k8s/postgres.yaml)           | Postgres in local Kubernetes. **Deleted on EKS** — replaced by RDS.                                                                              |
-| [`k8s/migration-job.yaml`](k8s/migration-job.yaml) | Runs `alembic upgrade head` as a one-shot Job. Same file works against RDS.                                                                      |
+| File                                                                   | Job                                                                                                                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`app/config.py`](app/config.py)                                       | Reads `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` (+ `DB_SSL`, pool sizes) and assembles the URL. The only place env vars are touched. |
+| [`app/db.py`](app/db.py)                                               | Async engine, connection pool, `get_session()` dependency. Knows about connections, not tables.                                                  |
+| [`app/models.py`](app/models.py)                                       | The `Message` ORM model. **Describes** the table in Python. Emits no DDL, ever.                                                                  |
+| [`alembic/versions/`](alembic/versions/)                               | The actual `CREATE TABLE`. The only thing that changes the schema.                                                                               |
+| [`docker-compose.yml`](docker-compose.yml)                             | Local dev: app + Postgres in one command.                                                                                                        |
+| [`k8s/overlays/local/postgres.yaml`](k8s/overlays/local/postgres.yaml) | Postgres in local Kubernetes. **Deleted on EKS** — replaced by RDS.                                                                              |
+| [`k8s/base/migration-job.yaml`](k8s/base/migration-job.yaml)           | Runs `alembic upgrade head` as a one-shot Job. Same file works against RDS.                                                                      |
 
 ### Where does the table actually get created?
 
@@ -179,15 +179,15 @@ you'll reuse on EKS.
 docker build -t realtime-app:0.2.0 .
 
 # 2. Postgres: Secret + PVC + Deployment + Service
-kubectl apply -f k8s/postgres.yaml
+kubectl apply -k k8s/overlays/local (kubectl apply -f k8s/postgres.yaml)
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
 
 # 3. Create the schema — one-shot Job
-kubectl apply -f k8s/migration-job.yaml
+kubectl apply -k k8s/overlays/local (kubectl apply -f k8s/migration-job.yaml)
 kubectl logs job/db-migrate          # should end: Running upgrade -> 0001
 
 # 4. The app
-kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+kubectl apply -k k8s/overlays/local (kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml)
 kubectl get pods -w                  # wait for READY 1/1
 ```
 
@@ -204,7 +204,7 @@ Rerunning the migration (Jobs are immutable — you must delete before re-applyi
 
 ```bash
 kubectl delete job db-migrate --ignore-not-found
-kubectl apply -f k8s/migration-job.yaml
+kubectl apply -k k8s/overlays/local
 ```
 
 psql against the in-cluster database:
@@ -261,7 +261,7 @@ db restarted:  /health → 200      /health/ready → 200   (data intact)
 
 ### The commit-a-Secret caveat
 
-[`k8s/postgres.yaml`](k8s/postgres.yaml) contains a Secret with the password in
+[`k8s/overlays/local/postgres.yaml`](k8s/overlays/local/postgres.yaml) contains a Secret with the password in
 `stringData`, committed to git on purpose so the local setup is reproducible.
 
 **`stringData` is base64-encoded by Kubernetes, and base64 is encoding, not encryption.**
@@ -274,16 +274,16 @@ credentials. **On EKS you do not commit the Secret** — see below.
 
 What actually changes. Less than you'd expect.
 
-| Concern           | Local Kubernetes                    | EKS                                           |
-| ----------------- | ----------------------------------- | --------------------------------------------- |
-| Postgres          | `k8s/postgres.yaml` (a pod)         | **delete that file** — provision RDS instead  |
-| `DB_HOST`         | `postgres` (Service name)           | the RDS endpoint                              |
-| `DB_SSL`          | `false`                             | **`true`** — RDS refuses plaintext            |
-| Secret            | committed, `stringData`             | from AWS Secrets Manager, **never committed** |
-| Image             | local Docker daemon, `IfNotPresent` | pushed to ECR, `imagePullPolicy: Always`      |
-| Migration Job     | same file                           | **same file, unchanged**                      |
-| `deployment.yaml` | —                                   | **unchanged**                                 |
-| `service.yaml`    | —                                   | unchanged (real ELB instead of `localhost`)   |
+| Concern           | Local Kubernetes                       | EKS                                           |
+| ----------------- | -------------------------------------- | --------------------------------------------- |
+| Postgres          | `overlays/local/postgres.yaml` (a pod) | **delete that file** — provision RDS instead  |
+| `DB_HOST`         | `postgres` (Service name)              | the RDS endpoint                              |
+| `DB_SSL`          | `false`                                | **`true`** — RDS refuses plaintext            |
+| Secret            | committed, `stringData`                | from AWS Secrets Manager, **never committed** |
+| Image             | local Docker daemon, `IfNotPresent`    | pushed to ECR, `imagePullPolicy: Always`      |
+| Migration Job     | same file                              | **same file, unchanged**                      |
+| `deployment.yaml` | —                                      | **unchanged**                                 |
+| `service.yaml`    | —                                      | unchanged (real ELB instead of `localhost`)   |
 
 That `deployment.yaml` is unchanged is the whole payoff. It pulls the Secret in wholesale
 with `envFrom`; it names no host and no credential, so it does not care what's in it.
@@ -408,7 +408,7 @@ The same Job, run by CI **before** the app rollout:
 
 ```bash
 kubectl delete job db-migrate --ignore-not-found
-kubectl apply -f k8s/migration-job.yaml
+kubectl apply -k k8s/overlays/local
 kubectl wait --for=condition=complete job/db-migrate --timeout=300s
 kubectl set image deployment/realtime-app realtime-app=<ecr-repo>:0.2.0
 ```
@@ -508,9 +508,9 @@ docker compose down -v                       # wipe including data
 
 # Kubernetes
 docker build -t realtime-app:0.2.0 .
-kubectl apply -f k8s/postgres.yaml
-kubectl apply -f k8s/migration-job.yaml      # delete the old Job first
-kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+kubectl apply -k k8s/overlays/local
+kubectl apply -k k8s/overlays/local   # after: kubectl delete job db-migrate
+kubectl apply -k k8s/overlays/local
 kubectl logs job/db-migrate
 kubectl exec -it deploy/postgres -- psql -U realtime -d realtime
 kubectl port-forward svc/postgres 5432:5432
@@ -524,6 +524,6 @@ alembic history --verbose
 alembic upgrade head --sql                   # print SQL, execute nothing
 
 # Teardown
-kubectl delete -f k8s/                       # includes Postgres
+kubectl delete -k k8s/overlays/local         # includes Postgres
 kubectl delete pvc postgres-data             # the data outlives the Deployment
 ```
