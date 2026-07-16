@@ -59,6 +59,7 @@ services:
   #
   api:
     build: .
+    # image: realtime-app:0.3.0 # With this we can mention the tag name
     # environment:
     #   # host.docker.internal resolves to the Windows host FROM INSIDE the container.
     #   # "localhost" would be the container itself — the #1 Docker networking mistake.
