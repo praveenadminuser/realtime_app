@@ -26,3 +26,6 @@ logs/
 .idea/
 Thumbs.db
 desktop.ini
+
+node_modules
+dist
