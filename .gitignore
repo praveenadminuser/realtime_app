@@ -1,1 +1,28 @@
-.pyc
+# --- Secrets ---------------------------------------------------------------
+# Ignore every env file, then explicitly un-ignore the committed template.
+# Order matters: the negation must come AFTER the pattern it overrides.
+.env
+.env.*
+!.env.example
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# --- App -------------------------------------------------------------------
+logs/
+
+# --- Editors / OS ----------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,26 @@
+# Applied to both the Deployment and the Job (they share a container image).
+#
+# imagePullPolicy: IfNotPresent was correct for a local Docker daemon. On EKS the
+# nodes have never seen this image and must actually pull it from ECR. `Always` also
+# guards against a node that cached an older build under the same tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: realtime-app
+          imagePullPolicy: Always
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  template:
+    spec:
+      containers:
+        - name: alembic
+          imagePullPolicy: Always

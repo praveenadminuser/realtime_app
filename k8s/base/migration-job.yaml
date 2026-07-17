@@ -1,17 +1,17 @@
 # Runs `alembic upgrade head` once, then exits.
 #
-#   kubectl delete job db-migrate --ignore-not-found   # Jobs are immutable; re-apply needs a delete
-#   kubectl apply -f k8s/migration-job.yaml
-#   kubectl logs job/db-migrate
+#   kubectl delete job db-migrate -n <ns> --ignore-not-found   # Jobs are immutable
+#   kubectl apply -k k8s/overlays/<env>
+#   kubectl logs job/db-migrate -n <ns>
 #
 # Why a Job and not an initContainer on the app Deployment: an initContainer runs
 # on EVERY pod, so scaling to 3 replicas means three concurrent `alembic upgrade`
 # runs racing each other. A Job runs exactly once. (Alembic does take a lock, so
 # the race is survivable — but "survivable" is a poor foundation for schema changes.)
 #
-# On EKS this same Job runs against RDS, unchanged: it reads DATABASE_URL from
-# the Secret exactly like the app does, and uses the same image so the migration
-# code and the app code can never drift apart.
+# It reads the SAME Secret and the SAME ConfigMap as the app, and runs the SAME
+# image tag. That is deliberate: the schema and the code that assumes it ship as
+# one artifact and cannot drift apart.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,16 +24,12 @@ spec:
       restartPolicy: Never
       containers:
         - name: alembic
-          # Same tag as the app Deployment, always. That is the point: the schema
-          # and the code that assumes it are shipped as one artifact.
+          # Placeholder — rewritten per overlay, exactly like the Deployment's.
           image: realtime-app:0.2.0
           imagePullPolicy: IfNotPresent
           command: ["alembic", "upgrade", "head"]
-          # The same Secret the app reads. Migrations must reach the same database
-          # by the same route — including TLS on RDS, which is why DB_SSL is here too.
           envFrom:
             - secretRef:
                 name: postgres-credentials
-          env:
-            - name: DB_SSL
-              value: "false" # "true" against RDS
+            - configMapRef:
+                name: app-config

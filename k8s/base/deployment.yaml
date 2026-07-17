@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment # desired state
+metadata:
+  name: realtime-app
+spec:
+  replicas: 1 # overlays override this (kustomization.yaml -> replicas:)
+  # Which pods this Deployment manages — must match the pod template's labels.
+  selector:
+    matchLabels:
+      app: realtime-app
+  template:
+    metadata:
+      labels:
+        app: realtime-app
+    spec:
+      containers:
+        - name: realtime-app
+          # A PLACEHOLDER. Every overlay rewrites this via the `images:` transformer:
+          # local keeps realtime-app:0.2.0 from the Docker daemon; the AWS overlays
+          # rewrite it to <account>.dkr.ecr.<region>.amazonaws.com/realtime-app:0.2.0.
+          # Immutable tags — never reuse a tag for different code, or nodes serve a
+          # stale cached image and your rollout is a silent no-op.
+          image: realtime-app:0.2.0
+          # Correct for a local image that was never pushed anywhere. The AWS
+          # overlays patch this to Always.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            # Credentials — DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME.
+            # Named, never inlined. Locally this Secret comes from overlays/local;
+            # on AWS the External Secrets Operator creates it from Secrets Manager.
+            # Same name in every environment, so THIS FILE NEVER CHANGES.
+            - secretRef:
+                name: postgres-credentials
+            # Non-secret config — DB_SSL, DB_ECHO. Generated per overlay by
+            # configMapGenerator, which appends a content hash to the name. That
+            # hash is the point: change DB_SSL and the ConfigMap name changes, so
+            # the Deployment changes, so Kubernetes rolls the pods. Edit a
+            # hand-written ConfigMap instead and the running pods keep the old value.
+            - configMapRef:
+                name: app-config
+          # Liveness: is the process wedged? Restarting fixes that.
+          # It does not check the database on purpose — see the note in main.py.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000 # This refers to pod port number.
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness: can this pod serve? This one DOES check the database, so a
+          # pod with no working DB connection is removed from the Service's
+          # endpoints (no traffic) but not killed — it rejoins by itself when
+          # Postgres recovers. This is also what lets the app start before the
+          # database is up, with no wait-for-it script.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            # Default is 1s. /health/ready opens a pooled connection and runs
+            # SELECT 1 — against RDS across a VPC with TLS, a cold connection can
+            # exceed that, and the probe would fail for latency rather than fault.
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi

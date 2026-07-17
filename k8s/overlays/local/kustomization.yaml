@@ -1,0 +1,27 @@
+# Docker Desktop Kubernetes.
+#
+#   docker build -t realtime-app:0.2.0 .
+#   kubectl apply -k k8s/overlays/local
+#   kubectl delete job db-migrate --ignore-not-found && kubectl apply -k k8s/overlays/local
+#   curl http://localhost:8080/health/ready
+#
+# The ONLY overlay that ships a database. On AWS, Postgres is RDS — see the
+# dev/uat/prod overlays, which have no postgres.yaml at all.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: default
+
+resources:
+  - ../../base
+  - postgres.yaml # in-cluster Postgres + its Secret. Local only.
+
+# Image stays as-is: realtime-app:0.2.0 straight from the local Docker daemon,
+# with the base's imagePullPolicy: IfNotPresent. There is no registry to pull from.
+
+# Non-secret config. Local Postgres speaks plaintext, and SQL echo is useful here.
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DB_SSL=false
+      - DB_ECHO=true

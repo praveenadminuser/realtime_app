@@ -1,0 +1,20 @@
+# The environment-agnostic manifests. This is never applied directly —
+# always through an overlay:  kubectl apply -k k8s/overlays/local
+#
+# Nothing here names a host, a credential, a registry, or an environment.
+# Everything that varies is either in the Secret (credentials), the ConfigMap
+# (DB_SSL / DB_ECHO), or an overlay patch (image, replicas, pull policy).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - migration-job.yaml
+
+# Stamped onto every resource, so `kubectl get all -l app.kubernetes.io/name=realtime-app`
+# finds the whole application.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: realtime-app
