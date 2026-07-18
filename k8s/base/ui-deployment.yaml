@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-ui
+spec:
+  replicas: 1 # overlays override
+  selector:
+    matchLabels:
+      app: realtime-ui
+  template:
+    metadata:
+      labels:
+        app: realtime-ui
+    spec:
+      containers:
+        - name: realtime-ui
+          # Placeholder tag, rewritten per overlay by the `images:` transformer, exactly
+          # like realtime-app. Local keeps this; the AWS overlays point it at ECR.
+          image: realtime-ui:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          env:
+            # Where nginx forwards /api. Read at container start by envsubst — see
+            # ui/nginx.conf.template. This is why the same image also runs under
+            # docker-compose, which sets http://api:8000 instead.
+            #
+            # "realtime-app" is the backend Service name (cluster DNS), 8080 its
+            # Service port, which forwards to the pod's 8000. Identical in every
+            # overlay, so this needs no per-environment patch.
+            - name: API_UPSTREAM
+              value: http://realtime-app:8080
+          # Both probes hit nginx's own /healthz, NOT the backend. The UI serves static
+          # files independently of the API — if the database is down, the page still
+          # loads and the browser shows the API error. Coupling the UI's readiness to
+          # the backend would take the UI offline for no reason.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi

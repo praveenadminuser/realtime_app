@@ -20,7 +20,7 @@ spec:
           # rewrite it to <account>.dkr.ecr.<region>.amazonaws.com/realtime-app:0.2.0.
           # Immutable tags — never reuse a tag for different code, or nodes serve a
           # stale cached image and your rollout is a silent no-op.
-          image: realtime-app:0.2.0
+          image: realtime_application-api:latest
           # Correct for a local image that was never pushed anywhere. The AWS
           # overlays patch this to Always.
           imagePullPolicy: IfNotPresent

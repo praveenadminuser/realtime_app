@@ -27,6 +27,8 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 # Where nginx forwards /api. Overridden per environment:
 #   compose -> http://api:8000          k8s -> http://realtime-app:8080
 # The default is the Kubernetes one, so the manifests need no extra env var.
+# We are passing it in docker compose and kubernetes ui-deployment.yaml. 
+# This is referenced in nginx.conf.template file to call api's
 ENV API_UPSTREAM=http://realtime-app:8080
 
 # Restrict envsubst to API_* names ONLY. Without this it would also try to expand
