@@ -1,0 +1,54 @@
+# Serves the built React app AND proxies /api to the backend — the "same-origin"
+# setup. The browser only ever calls this one server, so there is no CORS and no
+# API URL baked into the JS bundle. This is the cluster's counterpart to the Vite
+# dev proxy in vite.config.ts.
+#
+# ---------------------------------------------------------------------------
+# This is a TEMPLATE, not a finished config. The nginx image's entrypoint runs
+# envsubst over /etc/nginx/templates/*.template at container START and writes the
+# result to /etc/nginx/conf.d/. So ${API_UPSTREAM} is filled in at runtime:
+#
+#   docker compose   API_UPSTREAM=http://api:8000            (compose service name)
+#   kubernetes       API_UPSTREAM=http://realtime-app:8080   (Service name + port)
+#
+# That is why ONE image runs in both. Hardcoding "realtime-app:8080" would tie the
+# image to Kubernetes — the same mistake as baking a database host into the backend.
+#
+# Only ${API_UPSTREAM} is substituted: the Dockerfile sets NGINX_ENVSUBST_FILTER so
+# nginx's own runtime variables ($uri, $host, $remote_addr) are left untouched.
+# ---------------------------------------------------------------------------
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA routing: a request for /register isn't a file on disk — it's a client-side
+    # route. Fall back to index.html so React Router (when added) can handle it,
+    # instead of nginx returning 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API proxy. /api/users -> ${API_UPSTREAM}/users
+    # The TRAILING SLASH on proxy_pass is what strips the /api prefix — it matches
+    # the rewrite the Vite dev proxy does, so dev and cluster behave identically.
+    # (Remove that slash and the backend would receive /api/users and 404.)
+    location /api/ {
+        proxy_pass ${API_UPSTREAM}/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The UI's own health endpoint for Kubernetes probes. Deliberately does NOT touch
+    # the backend — the UI can still serve its static files when the API is down; the
+    # browser just shows the API error. Coupling them would take the UI down needlessly.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+}

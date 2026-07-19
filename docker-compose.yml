@@ -95,6 +95,31 @@ services:
     env_file: ${ENV_FILE:-.env.dev}
     ports:
       - "8000:8000"
+
+  # --- The React UI, as nginx serving the built bundle -------------------------
+  #
+  #   docker compose up -d --build      then open http://localhost:8080
+  #
+  # This runs the SAME production image that Kubernetes runs. The only difference is
+  # API_UPSTREAM below — nginx reads it at container start (see ui/nginx.conf.template),
+  # so one image works in both places without a rebuild.
+  #
+  # For day-to-day UI work prefer `cd ui && npm run dev` (port 5173): hot reload, no
+  # image rebuild per edit. This service is for exercising the real artifact.
+  ui:
+    build: ./ui
+    environment:
+      # "api" is the compose service name above, on port 8000 — the container's own
+      # port, since compose has no Service doing the 8080->8000 mapping Kubernetes does.
+      # In the cluster this becomes http://realtime-app:8080. NOT localhost: inside the
+      # ui container, localhost is the ui container.
+      API_UPSTREAM: http://api:8000
+    ports:
+      # 8080 on the host -> 80 in the container (nginx). The browser calls
+      # localhost:8080/api/users, nginx strips /api and forwards to api:8000/users.
+      - "8080:80"
+    depends_on:
+      - api
   #
   # Two things your local Postgres needs for this to work:
   #   postgresql.conf  listen_addresses = '*'      (not just 127.0.0.1)
