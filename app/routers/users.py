@@ -9,11 +9,27 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session
+from dependencies import get_current_active_user
+from models import User
 from schemas.user import UserCreate, UserRead
 from services import user_service
 
 # The prefix and tag live here, so main.py just includes the router without repeating them.
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.get("/me", response_model=UserRead, summary="Current authenticated user")
+async def read_current_user(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """A PROTECTED endpoint — the whole point of the auth layer. Depends on
+    get_current_active_user, so an absent or invalid bearer token gets 401 before this
+    body ever runs, and `current_user` is guaranteed to be a real, active user.
+
+    Declared before "" isn't necessary here (no /{id} route yet), but /me must always
+    precede any future /{user_id} route, or "me" would be parsed as an id.
+    """
+    return current_user
 
 
 @router.post(

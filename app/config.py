@@ -88,6 +88,24 @@ class Settings(BaseSettings):
     # Log every SQL statement. Useful locally, far too noisy in a cluster.
     db_echo: bool = False
 
+    # --- JWT / auth ----------------------------------------------------------
+    # The key that SIGNS every token. Anyone who has it can mint valid tokens for
+    # any user, so it is a top-tier secret: on AWS it belongs in the same Secret as
+    # the DB credentials, never committed. The default below is intentionally
+    # insecure so local dev works out of the box — main.py logs a loud warning if
+    # it's still in use, so it can't quietly reach production.
+    jwt_secret: SecretStr = SecretStr("dev-only-insecure-change-me")
+    # HS256 = one shared secret signs and verifies (symmetric). Fine when the same
+    # service does both. RS256 (a private key signs, a public key verifies) is what
+    # you'd move to once OTHER services need to validate tokens without holding the
+    # signing key.
+    jwt_algorithm: str = "HS256"
+    # Short-lived on purpose: a stateless JWT cannot be revoked before it expires,
+    # so a leaked token is valid until then. 30 min limits that blast radius. A
+    # refresh-token flow (not built yet) is how you keep sessions long without long
+    # access tokens.
+    access_token_expire_minutes: int = 30
+
     @property
     def sqlalchemy_url(self) -> str:
         """The URL the engine actually connects with."""

@@ -12,7 +12,7 @@ from sqlalchemy import text
 from config import settings
 from db import engine
 from logger import logger
-from routers import health, messages, users
+from routers import auth, health, messages, users
 
 
 @asynccontextmanager
@@ -26,6 +26,14 @@ async def lifespan(app: FastAPI):
     # safe_url, not the real one: the password is masked so it never reaches a log
     # aggregator. Logging the target answers "which database am I pointed at?" — the
     # first question in every connection bug.
+    #
+    # Refuse to let the insecure default signing key slip into a real environment.
+    # Anyone holding it can forge a token for any user, so this warning is loud.
+    if settings.jwt_secret.get_secret_value() == "dev-only-insecure-change-me":
+        logger.warning(
+            "JWT_SECRET is the built-in default — fine locally, NEVER in dev/uat/prod. "
+            "Set it via the environment / Kubernetes Secret."
+        )
     logger.info(f"Connecting to {settings.safe_url}")
     try:
         async with engine.connect() as conn:
@@ -49,6 +57,7 @@ app = FastAPI(
 
 # Register routers. New resources get one line each.
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(messages.router)
 

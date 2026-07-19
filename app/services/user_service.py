@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.security import hash_password
+from core.security import DUMMY_PASSWORD_HASH, hash_password, verify_password
 from logger import logger
 from models import User
 from schemas.user import UserCreate
@@ -50,9 +50,31 @@ async def create_user(session: AsyncSession, payload: UserCreate) -> User:
     return user
 
 
+async def get_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """Used by the auth dependency to turn a token's `sub` back into a User."""
+    return await session.get(User, user_id)
+
+
 async def get_by_username(session: AsyncSession, username: str) -> User | None:
     result = await session.execute(select(User).where(User.username == username))
     return result.scalar_one_or_none()
+
+
+async def authenticate_user(
+    session: AsyncSession, username: str, password: str
+) -> User | None:
+    """Return the user iff the username exists AND the password matches. Returns None
+    (not an exception) on any failure — the router turns that into a 401. The caller
+    must NOT reveal which half failed, or it becomes a username-enumeration oracle."""
+    user = await get_by_username(session, username)
+    if user is None:
+        # Verify against a dummy hash anyway, so a missing user costs the same time as
+        # a wrong password. See DUMMY_PASSWORD_HASH in core.security.
+        verify_password(password, DUMMY_PASSWORD_HASH)
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
 
 
 async def get_by_email(session: AsyncSession, email: str) -> User | None:
