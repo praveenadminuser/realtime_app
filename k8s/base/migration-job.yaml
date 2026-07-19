@@ -25,7 +25,7 @@ spec:
       containers:
         - name: alembic
           # Placeholder — rewritten per overlay, exactly like the Deployment's.
-          image: realtime-app:0.2.0
+          image: realtime_application-api:latest
           imagePullPolicy: IfNotPresent
           command: ["alembic", "upgrade", "head"]
           envFrom:
