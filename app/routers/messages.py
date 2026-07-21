@@ -13,8 +13,9 @@ from db import get_session
 from logger import logger
 from models import Message
 from schemas.message import MessageCreate, MessageRead
+from dependencies import get_current_active_user
 
-router = APIRouter(prefix="/messages", tags=["messages"])
+router = APIRouter(prefix="/messages", tags=["messages"], dependencies=[Depends(get_current_active_user)])
 
 
 @router.post("", response_model=MessageRead, status_code=status.HTTP_201_CREATED)
