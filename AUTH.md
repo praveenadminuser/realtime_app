@@ -256,33 +256,61 @@ openssl rand -hex 32
 
 ---
 
+## Client integration (the UI)
+
+The React UI now does the full flow. Files mirror the backend:
+
+- **Login** — [`pages/LoginPage.tsx`](ui/src/pages/LoginPage.tsx) → [`api/auth.ts`](ui/src/api/auth.ts)
+  `login()` POSTs form-encoded credentials to `/auth/login` and stores the token.
+- **Token attach** — [`api/client.ts`](ui/src/api/client.ts) adds `Authorization: Bearer`
+  to every request from one place. A `401` clears the stored token.
+- **Session state** — [`auth/AuthContext.tsx`](ui/src/auth/AuthContext.tsx) holds the
+  current user; on load it validates a stored token by calling `/users/me`.
+- **Route gating** — [`components/ProtectedRoute.tsx`](ui/src/components/ProtectedRoute.tsx)
+  bounces anonymous users to `/login`.
+- **Logout** — [`DashboardPage`](ui/src/pages/DashboardPage.tsx) calls
+  `POST /auth/logout` then drops the local token.
+
+**Logout is mostly client-side, by necessity.** `POST /auth/logout`
+([`routers/auth.py`](app/routers/auth.py)) requires a valid token and logs the event, but
+a stateless JWT stays cryptographically valid until `exp` — the server has nothing to
+delete. The *real* logout is the client discarding the token so it stops sending it. True
+server revocation needs a shared denylist of token ids (`jti`); an in-memory one breaks
+across replicas (each pod has its own memory), so short token lifetimes are the pragmatic
+substitute.
+
+**Where the token lives:** `localStorage` (see [`auth/storage.ts`](ui/src/auth/storage.ts)),
+chosen for surviving refresh. It is readable by any JS on the page, so an XSS bug leaks it
+— the documented trade-off vs. in-memory (safest, lost on reload) or an `HttpOnly` cookie
+(needs CSRF handling + a backend change). `storage.ts` is the single seam to swap it.
+
 ## Not built yet
 
-Deliberately out of scope for this server-side-only pass. Naming them so the gaps are
-explicit, not accidental:
+Naming the remaining gaps so they're explicit, not accidental:
 
-- **No refresh tokens.** When the 30-minute access token expires, the client must log in
+- **No refresh tokens.** When the 30-minute access token expires, the user must log in
   again. The standard fix is a long-lived refresh token (stored server-side, revocable)
-  that mints new access tokens — that's the next iteration.
-- **No logout / revocation.** A stateless JWT is valid until `exp` no matter what. Real
-  logout needs a server-side denylist of token ids (`jti`) or the refresh-token model.
+  that mints new access tokens — the next iteration, and also what makes real logout work.
+- **No server-side revocation.** As above: logout drops the client token but can't
+  invalidate an already-issued JWT before `exp`.
 - **No roles / permissions.** Every authenticated user is equal. RBAC would add a `role`
   claim and a dependency like `require_role("admin")`.
-- **No client-side integration.** The React UI does not log in or store a token yet — this
-  pass is server-only. When it's added: send `Authorization: Bearer` from
-  [`ui/src/api/client.ts`](ui/src/api/client.ts), and think hard about **where the token
-  lives** (an in-memory variable is safest; `localStorage` is XSS-readable; an
-  `HttpOnly` cookie needs CSRF protection).
-- **No rate limiting on login.** A brute-force protection (lockout / backoff) belongs in
+- **No rate limiting on login.** Brute-force protection (lockout / backoff) belongs in
   front of `/auth/login` before this is public.
 
 ---
 
 ## What is verified
 
-The modules **compile** and the routes register (`/auth/login`, `/users/me`). The flow has
-**not been run end to end** — no login exercised against a live database in this pass.
-Rebuild the backend image and run the migration first (the `users` table must exist), then
-walk the curl sequence above. As always with this project: a green Compose build does not
-mean the Kubernetes image is fresh — rebuild the `realtime-app` tag and
-`kubectl rollout restart` before testing in the cluster.
+The backend modules **compile** and the routes register (`/auth/login`, `/auth/logout`,
+`/users/me`, protected `/messages`). The UI **has not been built or run** — `react-router-dom`
+was added to `package.json` but not `npm install`ed, and no browser flow was exercised.
+
+To verify end to end:
+1. `cd ui && npm install` (pulls react-router-dom), then `npm run build` to shake out types.
+2. Rebuild the backend image and run migration `0002` (the `users` table must exist).
+3. Register → sign in → **Show messages** → log out, in the browser.
+
+As always: a green Compose build does not mean the Kubernetes images are fresh — rebuild
+**both** the `realtime-app` and `realtime-ui` tags and `kubectl rollout restart` before
+testing in the cluster.

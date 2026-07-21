@@ -1,14 +1,12 @@
-// The one module that talks HTTP. Every api/*.ts file goes through here, so retries,
-// auth headers, or a base-URL change happen in exactly one place.
+// The one module that talks HTTP. Every api/*.ts file goes through here, so the bearer
+// token, error handling, and base URL live in exactly one place.
+import { clearToken, getToken } from "../auth/storage";
 
-// Relative, deliberately. The browser resolves /api against whatever origin served
-// the page, so the SAME build works in dev (Vite proxies /api -> :8000) and in the
-// cluster (nginx proxies /api -> the backend Service). There is no API URL to
-// configure per environment — the mirror of how the backend reads DB_HOST at runtime.
+// Relative, deliberately. The browser resolves /api against whatever origin served the
+// page, so the SAME build works in dev (Vite proxies /api) and in the cluster (nginx
+// proxies /api). Nothing to configure per environment.
 const BASE = "/api";
 
-// A typed error so callers can branch on status (e.g. 409 = already registered)
-// instead of parsing strings.
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -22,23 +20,41 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
-    ...options,
-  });
+  // The login endpoint sends form-encoded data (URLSearchParams). For that, let the
+  // browser set Content-Type (application/x-www-form-urlencoded) itself; everything else
+  // is JSON. Setting JSON on a URLSearchParams body would make FastAPI reject the form.
+  const isForm = options.body instanceof URLSearchParams;
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
+  if (!isForm) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  // Attach the bearer token if we have one. THIS is how every protected call
+  // authenticates — the server reads this header (see dependencies.py).
+  const token = getToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+
+  // A 401 means the token is missing/expired/invalid. Drop it so the app falls back to
+  // the anonymous state; the caller decides whether to redirect to /login.
+  if (res.status === 401) {
+    clearToken();
+  }
 
   if (!res.ok) {
     throw new ApiError(res.status, await extractError(res));
   }
   if (res.status === 204) {
-    return undefined as T; // No Content
+    return undefined as T;
   }
   return (await res.json()) as T;
 }
 
-// FastAPI errors come in two shapes: a plain {"detail": "..."} (our HTTPExceptions)
-// and validation errors {"detail": [{msg, loc}, ...]} (422 from Pydantic). Flatten
-// both into one readable string.
+// FastAPI errors come in two shapes: {"detail": "..."} (our HTTPExceptions) and the 422
+// validation array {"detail": [{msg, loc}, ...]}. Flatten both to one readable string.
 async function extractError(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -54,7 +70,7 @@ async function extractError(res: Response): Promise<string> {
         .join(", ");
     }
   } catch {
-    // non-JSON body (e.g. an nginx 502) — fall through
+    // non-JSON body (e.g. an nginx 502)
   }
   return res.statusText || `Request failed (${res.status})`;
 }

@@ -1,6 +1,7 @@
 // The register feature's view. Holds form state, delegates the request to useRegister,
 // and renders one of three states: the form, a submit-in-progress button, or success.
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 
 import { Field } from "../../components/Field";
 import { useRegister } from "./useRegister";
@@ -39,8 +40,8 @@ export function RegisterForm() {
       <div className="card success">
         <h2>Welcome, {user.username} 🎉</h2>
         <p>
-          Account created with id <strong>{user.id}</strong> on{" "}
-          {new Date(user.created_at).toLocaleString()}.
+          Account created with id <strong>{user.id}</strong>. You can now{" "}
+          <Link to="/login">sign in</Link>.
         </p>
       </div>
     );
