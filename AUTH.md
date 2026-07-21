@@ -105,6 +105,85 @@ curl http://localhost:8000/users/me -H "Authorization: Bearer $TOKEN"
 
 ---
 
+## Two ways to extract the token: `OAuth2PasswordBearer` vs `HTTPBearer`
+
+Protected routes recognise the caller from the header `Authorization: Bearer <jwt>`. The
+dependency that pulls that token out of the request is a **security scheme**, and FastAPI
+offers two. **Both read the exact same header** — the difference is what they return, how
+they appear in Swagger, and what status they raise when the token is missing.
+
+This project uses `OAuth2PasswordBearer`. `HTTPBearer` is documented here as the
+alternative.
+
+| | `OAuth2PasswordBearer` (in use) | `HTTPBearer` |
+|---|---|---|
+| Reads | `Authorization: Bearer <jwt>` | `Authorization: Bearer <jwt>` (identical) |
+| Swagger **Authorize** dialog | **username + password** fields; Swagger calls `/auth/login` for you and stores the token | a single box where you **paste a token** you already obtained |
+| Needs `tokenUrl`? | yes — it's how Swagger knows where to log in | no |
+| Dependency gives you | the raw token **string** | an `HTTPAuthorizationCredentials` object (`.scheme`, `.credentials`) |
+| Missing token → | **401** Unauthorized + `WWW-Authenticate: Bearer` | **403** Forbidden, no header (unless `auto_error=False`) |
+| Best when | **your app issues the tokens** (our case) | tokens come from an **external** identity provider, or you prefer pasting |
+
+**Why we use `OAuth2PasswordBearer`.** Because this app owns `/auth/login`, the OAuth2
+scheme lets Swagger *perform the login itself* — you type username/password once in the
+Authorize dialog and every protected "Try it out" just works. That mirrors the real UI
+flow (enter credentials → get token → send bearer) with no copy-paste.
+
+### What changes to switch to `HTTPBearer`
+
+Only [`app/dependencies.py`](app/dependencies.py) changes. `/auth/login` and everything
+else stay exactly the same — how you *extract* the token is independent of how login
+*accepts* credentials.
+
+```python
+# before — OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),               # raw string
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    claims = decode_access_token(token)
+    ...
+```
+
+```python
+# after — HTTPBearer (auto_error=False keeps our 401 instead of a silent 403)
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+bearer_scheme = HTTPBearer(auto_error=False)
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    if credentials is None:                            # header absent
+        raise credentials_error                        # your existing 401
+    token = credentials.credentials                    # <-- unwrap the string
+    claims = decode_access_token(token)
+    ...
+```
+
+Three consequences worth knowing:
+
+1. **Swagger becomes a paste-token box.** With no `tokenUrl`, Swagger can't log you in.
+   You call `POST /auth/login` yourself (curl or its own "Try it out"), copy the
+   `access_token`, and paste it into Authorize. Swagger stops doing the login step.
+2. **Missing-token status flips 401 → 403.** A FastAPI quirk: bare `HTTPBearer` returns
+   403 (no `WWW-Authenticate`) when the header is absent, where `OAuth2PasswordBearer`
+   returns 401. `HTTPBearer(auto_error=False)` + the explicit `None` check above restores
+   the 401 — otherwise the downgrade surprises clients that key off 401.
+3. **`/auth/login` is untouched.** It still parses form-encoded username/password via
+   `OAuth2PasswordRequestForm`. Switching login to a JSON body is a *separate*, optional
+   decision, unrelated to the bearer scheme.
+
+**Rule of thumb:** if the API issues its own tokens, prefer `OAuth2PasswordBearer` for the
+better Swagger experience. Reach for `HTTPBearer` when your API only *verifies* tokens
+minted by someone else (an external IdP, Cognito, Auth0), where there's no local
+`/auth/login` for Swagger to call anyway.
+
+---
+
 ## What's inside the token
 
 A JWT is three base64url parts, `header.payload.signature`. Ours carries:
