@@ -1,5 +1,5 @@
-// A route-level screen. Pages compose features and layout; they hold no logic
-// themselves. When you add routing (react-router), each route renders a page like this.
+import { Link } from "react-router-dom";
+
 import { RegisterForm } from "../features/register/RegisterForm";
 
 export function RegisterPage() {
@@ -8,6 +8,9 @@ export function RegisterPage() {
       <h1>Create your account</h1>
       <p className="subtitle">Register for the Realtime App.</p>
       <RegisterForm />
+      <p className="muted">
+        Already have an account? <Link to="/login">Sign in</Link>
+      </p>
     </main>
   );
 }
