@@ -12,7 +12,7 @@ from sqlalchemy import text
 from config import settings
 from db import engine
 from logger import logger
-from routers import auth, health, messages, users
+from routers import auth, health, latest_date, messages, users
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(messages.router)
+app.include_router(latest_date.router)
 
 
 if __name__ == "__main__":

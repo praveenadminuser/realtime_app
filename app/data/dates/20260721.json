@@ -1,0 +1,8 @@
+{
+  "date": "20260721",
+  "items": [
+    { "id": 1, "label": "alpha" },
+    { "id": 2, "label": "beta" }
+  ],
+  "note": "sample content for 2026-07-21"
+}
