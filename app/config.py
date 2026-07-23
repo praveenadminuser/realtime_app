@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     # memory bounded as dates accumulate.
     date_files_cache_size: int = 128
 
+    # --- Redis (SHARED cache across pods) ------------------------------------
+    # lru_cache/TTLCache live in one process, so N replicas = N independent caches that
+    # drift. Redis is a separate service every pod talks to → one shared cache. See REDIS.md.
+    #   local host   redis://localhost:6379/0
+    #   compose      redis://redis:6379/0        (the compose service name)
+    #   kubernetes   redis://redis:6379/0        (the Service name)
+    #   AWS          redis://<elasticache-endpoint>:6379/0
+    redis_url: str = "redis://localhost:6379/0"
+    # Default TTL for cached values, in seconds.
+    cache_ttl_seconds: int = 60
+
     @property
     def sqlalchemy_url(self) -> str:
         """The URL the engine actually connects with."""

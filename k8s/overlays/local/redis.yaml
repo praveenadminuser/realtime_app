@@ -1,0 +1,64 @@
+# Redis for LOCAL Kubernetes only.
+#
+# Like postgres.yaml, this exists only in the local overlay. On AWS you replace it with
+# ElastiCache (managed Redis) — you don't run your own cache cluster for the same reasons
+# you don't run your own database. The app doesn't care: REDIS_URL points at this Service
+# locally and at the ElastiCache endpoint on AWS. See REDIS.md.
+#
+# No PersistentVolumeClaim, deliberately: a cache is DISPOSABLE. If the pod restarts and
+# loses everything, the app repopulates from Postgres on the next miss. Persisting cache
+# data would be storing something we can always recompute.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              # maxmemory could be set via a config to enforce an eviction policy; for a
+              # local demo the container limit is enough.
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  # ClusterIP: only the app pods talk to the cache, never the outside world — same
+  # reasoning as the postgres Service. (redis-cli locally: kubectl port-forward svc/redis 6379:6379)
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379

@@ -37,6 +37,8 @@ configMapGenerator:
     literals:
       - DB_SSL=true
       - DB_ECHO=false
+      # Replace with the ElastiCache primary endpoint for this environment.
+      - REDIS_URL=redis://<elasticache-endpoint>:6379/0
 
 patches:
   - path: patch-aws.yaml

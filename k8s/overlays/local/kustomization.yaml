@@ -15,6 +15,7 @@ namespace: default
 resources:
   - ../../base
   - postgres.yaml # in-cluster Postgres + its Secret. Local only.
+  - redis.yaml # in-cluster Redis (the shared cache). Local only; AWS uses ElastiCache.
 
 # Image stays as-is: realtime-app:0.2.0 straight from the local Docker daemon,
 # with the base's imagePullPolicy: IfNotPresent. There is no registry to pull from.
@@ -25,3 +26,5 @@ configMapGenerator:
     literals:
       - DB_SSL=false
       - DB_ECHO=true
+      # "redis" is the Service name from redis.yaml, resolved by cluster DNS.
+      - REDIS_URL=redis://redis:6379/0
