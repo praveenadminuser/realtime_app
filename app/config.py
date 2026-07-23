@@ -106,6 +106,23 @@ class Settings(BaseSettings):
     # access tokens.
     access_token_expire_minutes: int = 30
 
+    # --- latest-date file cache ----------------------------------------------
+    # Path to a JSON file holding {"latest_date": "yyyymmdd"}. The /latest-date
+    # endpoint serves it from an in-memory cache and only re-reads the file when the
+    # TTL below expires OR the file's modification time changes. Relative to the
+    # working directory (/app in the container, app/ when run locally).
+    latest_date_file: str = "data/latest_date.json"
+    # How long a cached read stays fresh, in seconds. 300 = 5 minutes.
+    latest_date_ttl_seconds: int = 300
+
+    # Directory of per-date content files, one per date: <date_files_dir>/<yyyymmdd>.json.
+    # These are IMMUTABLE snapshots (a past date's data doesn't change), so they're cached
+    # with functools.lru_cache — no TTL, no mtime check needed. See CACHE.md.
+    date_files_dir: str = "data/dates"
+    # LRU capacity: the N most-recently-used dates stay in memory, older ones evict. Keeps
+    # memory bounded as dates accumulate.
+    date_files_cache_size: int = 128
+
     @property
     def sqlalchemy_url(self) -> str:
         """The URL the engine actually connects with."""
