@@ -1,0 +1,72 @@
+# Local PySpark ETL playground: MinIO (an S3-compatible server) + Spark.
+#
+# The point: exercise the EXACT s3a:// read/write code path you'd use against real AWS S3,
+# with zero AWS account and zero cost. Only the endpoint differs. See etl_spark/README.md.
+#
+#   docker compose up --build         # builds the spark image, runs the flow once, exits
+#   MinIO console: http://localhost:9001  (minioadmin / minioadmin)
+#
+# This is a SEPARATE compose file from the app's — a self-contained data playground.
+
+services:
+  # --- MinIO: stands in for AWS S3 ------------------------------------------
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000" # S3 API — what Spark's s3a connector talks to
+      - "9001:9001" # web console — browse buckets/objects at http://localhost:9001
+    volumes:
+      - minio-data:/data
+
+  # --- One-shot: create buckets and upload the sample file, then exit --------
+  # mc is MinIO's CLI. This simulates "upstream drops a file into the raw S3 bucket".
+  # It retries `mc alias set` in a loop instead of relying on a MinIO healthcheck — the
+  # minio image has neither `mc` nor an alias configured, so a healthcheck there is flaky.
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    volumes:
+      - ./data:/seed:ro
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do
+        echo 'waiting for minio...'; sleep 1;
+      done &&
+      mc mb --ignore-existing local/raw &&
+      mc mb --ignore-existing local/curated &&
+      mc cp /seed/sample_sales.csv local/raw/sales/sample_sales.csv &&
+      echo 'seeded raw/sales/sample_sales.csv' &&
+      exit 0
+      "
+
+  # --- Spark: runs the ETL job once, in local[*] mode -----------------------
+  # Built from ./Dockerfile (pinned pyspark) rather than a third-party Spark image — see
+  # the Dockerfile for why.
+  spark:
+    build: .
+    depends_on:
+      createbuckets:
+        condition: service_completed_successfully
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+    volumes:
+      - ./jobs:/opt/jobs:ro
+    # --packages pulls the S3A connector (hadoop-aws) + AWS SDK from Maven on first run;
+    # it must match Spark's bundled Hadoop version (Spark 3.5.3 → Hadoop 3.3.4). Cached to
+    # /tmp/.ivy2 so re-runs are fast. First run downloads a few hundred MB — needs internet.
+    command: >
+      spark-submit
+      --master local[*]
+      --packages org.apache.hadoop:hadoop-aws:3.3.4
+      --conf spark.jars.ivy=/tmp/.ivy2
+      /opt/jobs/sample_etl.py
+
+volumes:
+  minio-data:

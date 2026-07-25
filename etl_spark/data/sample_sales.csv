@@ -1,0 +1,11 @@
+txn_date,region,product,amount
+2026-07-20,APAC,widget,120.50
+2026-07-20,APAC,gadget,80.00
+2026-07-20,EMEA,widget,200.00
+2026-07-20,AMER,widget,150.75
+2026-07-21,APAC,widget,50.25
+2026-07-21,AMER,gadget,300.00
+2026-07-21,EMEA,gadget,90.00
+2026-07-21,EMEA,gadget,-5.00
+2026-07-21,,widget,10.00
+2026-07-21,AMER,widget,not_a_number
