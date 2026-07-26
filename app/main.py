@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import text
 
+import redis_cache
 from config import settings
 from db import engine
 from logger import logger
@@ -42,10 +43,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error(f"Database unreachable at startup: {exc}")
 
+    # Probe Redis too — but only WARN if it's down. Caching is an optimization; the app
+    # runs without it (reads fall through to the DB). This must not block startup.
+    if await redis_cache.ping():
+        logger.info("Redis reachable at startup")
+    else:
+        logger.warning("Redis unreachable at startup — caching degraded to pass-through")
+
     yield
 
     await engine.dispose()
-    logger.info("Database connection pool closed")
+    await redis_cache.close()
+    logger.info("Database and Redis connections closed")
 
 
 app = FastAPI(

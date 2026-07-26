@@ -93,8 +93,29 @@ services:
     # on a laptop: prod reads a Kubernetes Secret sourced from AWS Secrets Manager,
     # which is what the `envFrom` in k8s/deployment.yaml is already wired to.
     env_file: ${ENV_FILE:-.env.dev}
+    environment:
+      # Points the app at the redis service below. "redis" is the compose service name,
+      # resolved by compose DNS — same idea as DB_HOST=db. This overrides whatever is in
+      # the env file. In k8s this becomes the redis Service name (also "redis").
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
+
+  # --- Redis: the SHARED cache -------------------------------------------------
+  # Unlike lru_cache/TTLCache (per-process), every api replica connects to this one
+  # instance, so they share cached values. No volume: cache data is disposable by design —
+  # if Redis restarts, the app just repopulates from the database. See REDIS.md.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379" # exposed so you can attach redis-cli / RedisInsight from Windows
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   # --- The React UI, as nginx serving the built bundle -------------------------
   #
