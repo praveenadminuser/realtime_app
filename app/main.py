@@ -13,7 +13,8 @@ import redis_cache
 from config import settings
 from db import engine
 from logger import logger
-from routers import auth, health, latest_date, messages, users
+from middleware import register_middlewares
+from routers import auth, health, latest_date, messages, metrics, users
 
 
 @asynccontextmanager
@@ -64,8 +65,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Cross-cutting HTTP middleware (request timing/access logging). One call; see middleware/.
+register_middlewares(app)
+
 # Register routers. New resources get one line each.
 app.include_router(health.router)
+app.include_router(metrics.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(messages.router)
