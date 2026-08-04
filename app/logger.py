@@ -34,5 +34,13 @@ logging.basicConfig(
     handlers=[stream_handler, file_handler],
 )
 
+# Silence chatty third-party libraries. The root logger is DEBUG (so OUR app can log at
+# DEBUG), but that also makes every dependency spew its own DEBUG lines — the httpcore
+# "receive_response_body.started / response_closed.complete" play-by-play on every single
+# HTTP call (Chroma, Ollama, httpx). Pin those loggers to WARNING so only real problems
+# from them show. Add a name here whenever a new dependency floods the logs.
+for _noisy in ("httpcore", "httpx", "urllib3", "chromadb", "ollama"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # Import this in other modules:  from logger import logger
 logger = logging.getLogger("realtime_app")

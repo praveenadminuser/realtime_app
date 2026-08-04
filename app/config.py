@@ -115,6 +115,25 @@ class Settings(BaseSettings):
     # How long a cached read stays fresh, in seconds. 300 = 5 minutes.
     latest_date_ttl_seconds: int = 300
 
+    # --- RAG (LangChain + Ollama + Chroma) -----------------------------------
+    # Ollama + Chroma run OUTSIDE the app (locally installed, or containers). The app just
+    # connects. host.docker.internal reaches host services from inside a container; use
+    # localhost when running uvicorn directly on the host. See RAG.md / rag/docker-compose.yml.
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_llm_model: str = "llama3.2"
+    # MUST match between ingest and query — vectors are only comparable if made by the same
+    # model. Changing this means re-indexing every document. See RAG.md.
+    ollama_embed_model: str = "nomic-embed-text"
+    chroma_host: str = "localhost"
+    # 8001, NOT 8000: the app itself uses 8000 (uvicorn / the published container port), so
+    # Chroma would collide with it on the host — you can't bind one port twice. Run Chroma
+    # on 8001: `chroma run --host 0.0.0.0 --port 8001 --path ./chroma-data`.
+    chroma_port: int = 8001
+    rag_collection: str = "documents"
+    rag_chunk_size: int = 1000       # characters per chunk
+    rag_chunk_overlap: int = 150     # overlap so a fact split across a boundary isn't lost
+    rag_top_k: int = 4               # how many chunks to retrieve into the prompt
+
     # Directory of per-date content files, one per date: <date_files_dir>/<yyyymmdd>.json.
     # These are IMMUTABLE snapshots (a past date's data doesn't change), so they're cached
     # with functools.lru_cache — no TTL, no mtime check needed. See CACHE.md.

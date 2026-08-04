@@ -13,6 +13,13 @@
 # point DB_HOST at host.docker.internal. No app code changes either way.
 # ---------------------------------------------------------------------------
 
+# Pull in the RAG stack's Chroma service (rag/docker-compose.yml). `include` (not `-f`)
+# because it resolves that file's relative paths against ITS OWN directory. Ollama stays a
+# local install; only Chroma is containerized here. The app reaches Chroma by its SERVICE
+# NAME on the compose network — see CHROMA_HOST below.
+include:
+  - rag/docker-compose.yml
+
 services:
   # db:
   #   image: postgres:16-alpine
@@ -98,10 +105,30 @@ services:
       # resolved by compose DNS — same idea as DB_HOST=db. This overrides whatever is in
       # the env file. In k8s this becomes the redis Service name (also "redis").
       REDIS_URL: redis://redis:6379/0
+      # RAG deps run on the HOST (locally installed Ollama + Chroma), so from inside this
+      # container we reach them via host.docker.internal — NOT localhost (that's the
+      # container). See rag/docker-compose.yml. Config defaults are localhost for host-run.
+      # Ollama is still your LOCAL install — reach the host from inside the container.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Pin to a tag you actually have (`ollama list`). A bare "llama3.2" resolves to
+      # "llama3.2:latest", which you haven't pulled → 404. You have llama3.2:3b.
+      OLLAMA_LLM_MODEL: llama3.2:3b
+      # Chroma is now a compose SERVICE (from the included rag file). Reach it by service
+      # name on its CONTAINER port (8000) over the compose network — NOT the host-published
+      # 8001 (that's only for you to curl Chroma from the host). This is the same
+      # service-name DNS as DB_HOST=db / REDIS_URL=redis.
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      # service_started, not service_healthy: the Chroma image has no in-container HTTP
+      # client to health-check with, and the app only needs Chroma on /rag/* calls (it
+      # degrades gracefully otherwise). See rag/docker-compose.yml.
+      chroma:
+        condition: service_started
 
   # --- Redis: the SHARED cache -------------------------------------------------
   # Unlike lru_cache/TTLCache (per-process), every api replica connects to this one

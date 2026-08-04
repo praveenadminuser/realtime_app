@@ -1,0 +1,53 @@
+# RAG dependencies: ChromaDB (active, containerized) + Ollama (kept as your LOCAL install).
+#
+# This file is `include`d by the root docker-compose.yml, so `docker compose up` at the root
+# starts Chroma alongside the app. Ollama stays local (your llama3.2 + nomic-embed-text and
+# GPU already live there); the app reaches it via host.docker.internal — see the api
+# service's OLLAMA_BASE_URL in the root compose.
+#
+# PORT NOTE: Chroma is published on host 8001, NOT 8000 — the app owns 8000, and one host
+# port can't be bound twice. The app connects with CHROMA_PORT=8001 (root compose / config).
+#
+# `include` resolves this file's relative paths (volumes, etc.) relative to THIS file, which
+# is why the whole per-stack layout keeps working when pulled into the root compose.
+
+services:
+  # --- ChromaDB: vector store, SERVER mode (shared across pods) -----------------
+  # Server mode (a container the app connects to), not embedded — so every app replica
+  # shares ONE index. Same multi-pod reasoning as Redis. See RAG.md.
+  chroma:
+    # PINNED to match the client (chromadb==0.5.23 in requirements.txt). `latest` is server
+    # 1.0.0, whose response schemas the 0.5.x client can't fully parse (the "'_type'" error
+    # on count()). Client and server MUST be the same major/minor. If you upgrade one, upgrade
+    # both — the pip package and this image tag move together.
+    image: chromadb/chroma:0.5.23
+    ports:
+      - "8001:8000" # host 8001 (avoids the app's 8000) -> Chroma's container port 8000
+    volumes:
+      # 0.5.x persists to /chroma/chroma (1.0 changed this to /data). Verified from the
+      # startup log's "Saving data to:" line.
+      - chroma-data:/chroma/chroma
+    # No healthcheck: this image ships no curl/wget/python, so there's no in-container way
+    # to probe the HTTP endpoint. The app doesn't need Chroma at boot (only on /rag/* calls)
+    # and degrades gracefully if it's down, so `depends_on: service_started` is enough.
+    # (To health-check it, do so from OUTSIDE — e.g. curl http://localhost:8001/api/v2/heartbeat.)
+
+# --- Ollama (REFERENCE ONLY — you run it locally) --------------------------------
+# Left commented on purpose: containerizing Ollama would re-pull multi-GB models into a
+# volume and skip your GPU. Uncomment (and add it to depends_on) only if you ever want a
+# fully self-contained stack.
+#
+#   ollama:
+#     image: ollama/ollama:latest
+#     ports: ["11434:11434"]
+#     volumes: [ollama-models:/root/.ollama]
+#   ollama-pull:
+#     image: ollama/ollama:latest
+#     depends_on: [ollama]
+#     entrypoint: >
+#       /bin/sh -c "OLLAMA_HOST=http://ollama:11434 ollama pull llama3.2 &&
+#                   OLLAMA_HOST=http://ollama:11434 ollama pull nomic-embed-text"
+
+volumes:
+  chroma-data:
+# ollama-models:   # uncomment with the ollama service above

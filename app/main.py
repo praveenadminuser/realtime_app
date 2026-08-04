@@ -14,7 +14,7 @@ from config import settings
 from db import engine
 from logger import logger
 from middleware import register_middlewares
-from routers import auth, health, latest_date, messages, metrics, users
+from routers import auth, health, latest_date, messages, metrics, rag, users
 
 
 @asynccontextmanager
@@ -75,6 +75,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(messages.router)
 app.include_router(latest_date.router)
+app.include_router(rag.router)
 
 
 if __name__ == "__main__":

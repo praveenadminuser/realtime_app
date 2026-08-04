@@ -11,3 +11,12 @@ python-multipart==0.0.20
 cachetools==5.5.0
 redis==5.2.1
 prometheus-client==0.21.1
+# --- RAG (LangChain + Ollama + Chroma). Versions are a compatible late-2024 set;
+# if pip resolves a conflict, bump the langchain-* trio together (they release in lockstep).
+langchain==0.3.13
+langchain-community==0.3.13
+langchain-ollama==0.2.2
+langchain-chroma==0.1.4
+chromadb==0.5.23
+pypdf==5.1.0
+httpx==0.28.1
